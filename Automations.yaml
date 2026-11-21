@@ -1,0 +1,311 @@
+# Dagelijkse verschuiving van data: Verplaats de waarden in de helpers aan het einde van elke dag:
+  - id: 'dagelijks_gasverbruik_verschuiven'
+    alias: "Dagelijks Gasverbruik Verschuiven"
+    initial_state: true
+    triggers:
+      - trigger: time
+        at: "23:55:00"
+    actions:
+      - action: input_number.set_value
+        entity_id: input_number.gas7
+        data:
+          value: "{{ states('input_number.gas6') | float(0) }}"
+      - action: input_number.set_value
+        entity_id: input_number.gas6
+        data:
+          value: "{{ states('input_number.gas5') | float(0) }}"
+      - action: input_number.set_value
+        entity_id: input_number.gas5
+        data:
+          value: "{{ states('input_number.gas4') | float(0) }}"
+      - action: input_number.set_value
+        entity_id: input_number.gas4
+        data:
+          value: "{{ states('input_number.gas3') | float(0) }}"
+      - action: input_number.set_value
+        entity_id: input_number.gas3
+        data:
+          value: "{{ states('input_number.gas2') | float(0) }}"
+      - action: input_number.set_value
+        entity_id: input_number.gas2
+        data:
+          value: "{{ states('input_number.gas1') | float(0) }}"
+      - action: input_number.set_value
+        entity_id: input_number.gas1
+        data:
+          value: "{{ states('sensor.daily_gasverbruik') | float(0) }}"
+    trace:
+      stored_traces: 10
+    mode: restart
+
+
+  - id: 'detecteer_hoog_gasverbruik'
+    alias: "Detecteer Hoog Gasverbruik"
+    initial_state: true
+    description: >
+      Waarschuwt wanneer het dagelijkse gasverbruik
+      meer dan 25% boven het weekgemiddelde ligt.
+    triggers:
+      - trigger: state
+        entity_id: sensor.daily_gasverbruik
+    conditions:
+      # Dagverbruik moet boven de alarmdrempel liggen
+      - condition: template
+        value_template: >
+          {% set week = states('sensor.gas_week_gemiddelde') | float(0) %}
+          {% set vandaag = states('sensor.daily_gasverbruik') | float(0) %}
+          {{ week > 0 and vandaag > (week * 1.25) }}
+      # max 1 melding per 6 uur. (21600) voor testen: 300
+      - condition: template
+        value_template: >
+          {% set last = state_attr(this.entity_id, 'last_triggered') %}
+          {{ last is none or
+             (as_timestamp(now()) - as_timestamp(last)) > 21600 }}                
+    actions:
+      - action: notify.henk
+        data:
+          message: |
+            🚨 Hoog gasverbruik: {{ states('sensor.daily_gasverbruik') }} m³.
+
+            Weekgemiddelde:
+            {{ states('sensor.gas_week_gemiddelde') }} m³
+
+            Alarmdrempel:
+            {{ (states('sensor.gas_week_gemiddelde') | float(0) * 1.25) | round(2) }} m³
+          data:
+            ttl: 0
+            priority: high
+            clickAction: "noAction"
+    trace:
+      stored_traces: 10
+    mode: single
+
+
+  - id: 'gas_maandgemiddelde_opslaan'
+    alias: Gasverbruik - maandgemiddelde opslaan
+    initial_state: true
+    description: >
+      Slaat aan het einde van iedere maand
+      het gemiddelde dagelijkse gasverbruik op
+      in de juiste input_number helper.
+    triggers:
+      - trigger: time
+        at: "23:56:00"
+    conditions:
+      # morgen is dag 1
+      - condition: template
+        value_template: >
+          {{ (now() + timedelta(days=1)).day == 1 }}
+    variables:
+      maanden: >
+        {{ [
+          "januari","februari","maart","april",
+          "mei","juni","juli","augustus",
+          "september","oktober","november","december"
+        ] }}
+      maand: >
+        {{ maanden[now().month - 1] }}
+      dagen_in_maand: >
+        {{ now().day }}
+      totaal_verbruik: >
+        {{ states('sensor.monthly_gasverbruik') | float(0) }}
+      gemiddelde: >
+        {{ (totaal_verbruik / dagen_in_maand) | round(2) }}
+      helper: >
+        {{ 'input_number.gem_' ~ maand ~ '_2' }}
+    actions:
+      - action: input_number.set_value
+        target:
+          entity_id: "{{ helper }}"
+        data:
+          value: "{{ gemiddelde }}"
+      - action: system_log.write
+        data:
+          level: info
+          message: >
+            Gas maandgemiddelde opgeslagen:
+            {{ helper }} = {{ gemiddelde }} m³
+    trace:
+      stored_traces: 10
+    mode: single
+
+
+  - id: 'gasverbruik_dagen_tellen'
+    alias: Gasverbruik - dagen boven alarmdrempel tellen
+    initial_state: true
+    description: >
+      Controleert dagelijks om 23:54 uur of het dagverbruik
+      boven de alarmdrempel ligt. Bij overschrijding wordt
+      de teller verhoogd. Anders wordt de teller gereset.
+    triggers:
+      - trigger: time
+        at: "23:54:00"
+    variables:
+      weekgemiddelde: >
+        {{ states('sensor.gas_week_gemiddelde') | float(0) }}
+      vandaag: >
+        {{ states('sensor.daily_gasverbruik') | float(0) }}
+      alarmdrempel: >
+        {{ weekgemiddelde * 1.25 }}
+    actions:
+      - choose:
+          # Dagverbruik boven alarmdrempel
+          - conditions:
+              - condition: template
+                value_template: >
+                  {{ weekgemiddelde > 0 and vandaag > alarmdrempel }}
+            sequence:
+              - action: counter.increment
+                target:
+                  entity_id: counter.gas_boven_gemiddelde_dagen
+        # Niet boven alarmdrempel: teller resetten
+        default:
+          - action: counter.reset
+            target:
+              entity_id: counter.gas_boven_gemiddelde_dagen
+    trace:
+      stored_traces: 10
+    mode: single
+
+
+  - id: 'dagelijks_gasverbruik_boven_maandgemiddelde'
+    alias: Gasverbruik - waarschuwing bij 3 dagen boven alarmdrempel
+    initial_state: true
+    description: >
+      Waarschuwt wanneer het gasverbruik drie of meer
+      opeenvolgende dagen boven de alarmdrempel ligt.
+    triggers:
+      - trigger: numeric_state
+        entity_id: counter.gas_boven_gemiddelde_dagen
+        above: 2
+    variables:
+      weekgemiddelde: >
+        {{ states('sensor.gas_week_gemiddelde') | float(0) }}
+      vandaag: >
+        {{ states('sensor.daily_gasverbruik') | float(0) }}
+      alarmdrempel: >
+        {{ (weekgemiddelde * 1.25) | round(2) }}
+      dagen: >
+        {{ states('counter.gas_boven_gemiddelde_dagen') | int(0) }}
+    conditions:
+      - condition: template
+        value_template: >
+          {{ weekgemiddelde > 0 }}
+    actions:
+      - action: notify.henk
+        data:
+          message: |
+            🚨 Aanhoudend hoog gasverbruik!
+
+            Het gasverbruik ligt inmiddels
+            {{ dagen }} opeenvolgende dagen boven de alarmdrempel.
+
+            Vandaag:
+            {{ vandaag | round(2) }} m³
+
+            Weekgemiddelde:
+            {{ weekgemiddelde | round(2) }} m³
+
+            Alarmdrempel:
+            {{ alarmdrempel }} m³
+
+            Controleer of het hogere verbruik door
+            verwarming of warmwatergebruik wordt veroorzaakt.
+          data:
+            ttl: 0
+            priority: high
+            clickAction: "noAction"
+    trace:
+      stored_traces: 10
+    mode: single
+
+
+  - id: 'gasverbruik_einde_dag_data_log'
+    alias: Gasverbruik einde dag - Log Data & Reset
+    initial_state: true
+    description: >
+      Schrijft dagelijkse gasdata naar Google Sheets voor analyse.
+    triggers:
+      - trigger: time
+        at: "23:57:00"
+    conditions: []
+    actions:
+      - action: google_sheets.append_sheet
+        data:
+          config_entry: 12345678900987654321123456      #<----- Vul hier je eigen entry-id in
+          worksheet: Gasverbruik
+
+          data:
+            Datum: >
+              {{ now().strftime('%Y-%m-%d') }}
+
+            Dag: >
+              {{ ["Maandag","Dinsdag","Woensdag","Donderdag",
+                  "Vrijdag","Zaterdag","Zondag"][now().weekday()] }}
+
+            # Dagverbruik is de totale hoeveelheid gas die de installatie 
+            # op één kalenderdag heeft geregistreerd.
+            Dagverbruik: >
+              {{ states('sensor.daily_gasverbruik') | float(0) | round(2) }}
+
+            # Het weekgemiddelde is de gemiddelde hoeveelheid gas die je
+            # per dag verbruikt op basis van de laatste week metingen.
+            Weekgemiddelde: >
+              {% set v = states('sensor.gas_week_gemiddelde') %}
+              {% if v not in ['unknown','unavailable','0',''] %}
+                {{ v | float(0) | round(2) }}
+              {% else %}
+                {{ states('sensor.daily_gasverbruik') | float(0) | round(2) }}
+              {% endif %}
+
+            # voortschrijdend gemiddelde
+            # De formule is:
+            #   Maandgemiddelde = totaal gasverbruik deze maand ÷ aantal verstreken dagen
+            Maandgemiddelde: >
+              {% set totaal = states('sensor.monthly_gasverbruik') | float(0) %}
+              {% set dagen = now().day %}
+              {% if dagen > 0 %}
+                {{ (totaal / dagen) | round(2) }}
+              {% else %}
+                0
+              {% endif %}
+
+            # Dit is het cumulatieve gasverbruik vanaf de eerste dag
+            # van de lopende maand tot en met vandaag.
+            # De waarde wordt automatisch opnieuw opgebouwd door de Utility Meter
+            # en begint op de eerste dag van een nieuwe maand weer bij nul.
+            Huidige_maand_dagverbruik: >
+              {{ states('sensor.monthly_gasverbruik') | float(0) | round(2) }}
+
+            # De alarmdrempel is de berekende grens waarmee het dagverbruik wordt vergeleken.
+            # Deze grens is gebaseerd op het weekgemiddelde (× 1,25).
+            # Dagverbruik → de actuele meting van vandaag.
+            # Weekgemiddelde → de referentie voor wat normaal is
+            #   onder drempel → normaal gedrag
+            #   net erboven → lichte afwijking
+            #   ruim erboven → mogelijke structurele afwijking of lek
+            Alarmdrempel: >
+              {{ (
+                states('sensor.gas_week_gemiddelde') | float(0) * 1.25
+              ) | round(2) }}
+
+            # De teller is het aantal opeenvolgende dagen dat het gasverbruik boven de alarmdrempel ligt.
+            # Het geeft aan hoe lang een afwijking aanhoudt.
+            Teller: >
+              {{ states('counter.gas_boven_gemiddelde_dagen') | int(0) }}
+
+            # De buitentemperatuur is de temperatuur buiten op het moment van meten (einde dag).
+            #   koud → hoger gasverbruik verwacht
+            #   warm → lager gasverbruik verwacht
+            # Zonder temperatuur zie je alleen verbruik, maar niet de oorzaak
+            #   hoog gas + lage temperatuur → normaal gedrag
+            #   hoog gas + hoge temperatuur → verdacht
+            #   laag gas + lage temperatuur → efficiënt gedrag
+            #   laag gas + hoge temperatuur → normaal of standby
+            Buitentemperatuur: >
+              {{ states('sensor.temperatuur') | float(0) | round(1) }}
+    trace:
+      stored_traces: 10
+    mode: single
+
+    

@@ -1,0 +1,67 @@
+type: vertical-stack
+cards:
+  - type: markdown
+    content: |
+      # Gasverbruik en bewaking
+      Overzicht van dagelijks verbruik, gemiddelden en afwijkingen.
+  - type: grid
+    columns: 2
+    square: false
+    cards:
+      - type: tile
+        entity: sensor.daily_gasverbruik
+        name: Vandaag
+        icon: mdi:fire
+        tap_action:
+          action: none
+      - type: tile
+        entity: sensor.gas_week_gemiddelde
+        name: Weekgemiddelde
+        icon: mdi:chart-line
+        tap_action:
+          action: none
+      - type: tile
+        entity: sensor.monthly_gasverbruik
+        name: Deze maand
+        icon: mdi:calendar-month
+        tap_action:
+          action: none
+      - type: tile
+        entity: sensor.temperatuur
+        name: Buitentemperatuur
+        icon: mdi:thermometer
+        tap_action:
+          action: none
+  - type: entities
+    title: Gasverbruik bewaking
+    show_header_toggle: false
+    entities:
+      - entity: counter.gas_boven_gemiddelde_dagen
+        name: Dagen boven de drempel
+        tap_action:
+          action: none
+  - type: history-graph
+    title: Gasverbruik en buitentemperatuur
+    hours_to_show: 168
+    refresh_interval: 300
+    entities:
+      - entity: sensor.daily_gasverbruik
+        name: Dagverbruik
+        tap_action:
+          action: none
+      - entity: sensor.gas_week_gemiddelde
+        name: Weekgemiddelde
+        tap_action:
+          action: none
+      - entity: sensor.temperatuur
+        name: Buitentemperatuur
+        tap_action:
+          action: none
+  - type: entities
+    title: ''
+    show_header_toggle: false
+    entities:
+      - entity: sensor.p1_meter_5c2faf065e82_total_gas
+        name: Totaalstand gasmeter
+        tap_action:
+          action: none

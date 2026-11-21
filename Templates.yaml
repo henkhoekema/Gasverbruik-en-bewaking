@@ -1,0 +1,16 @@
+# Gemiddelde van 7 dagen berekenen voor gasdetectie
+  - sensor:
+      - name: gas_week_gemiddelde
+        unique_id: gas_week_gemiddelde
+        unit_of_measurement: "m³"
+        state: >-
+          {% set totaal =
+            states('input_number.gas1')|float(0) +
+            states('input_number.gas2')|float(0) +
+            states('input_number.gas3')|float(0) +
+            states('input_number.gas4')|float(0) +
+            states('input_number.gas5')|float(0) +
+            states('input_number.gas6')|float(0) +
+            states('input_number.gas7')|float(0)
+          %}
+          {{ (totaal / 7) | round(2) }}
